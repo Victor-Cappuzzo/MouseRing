@@ -4,89 +4,97 @@ import math
 import board
 from trackball import TrackBall
 import busio
+import digitalio as dio
+from adafruit_ble import BLERadio
+from adafruit_ble.services.standard.hid import HIDService
+from adafruit_hid.mouse import Mouse
+from adafruit_ble.advertising.standard import ProvideServicesAdvertisement
 
 
-print("Trackball mouse started...")
+# Button 1 setup
+BUTTON_1_PIN = board.D10
+button1 = dio.DigitalInOut(BUTTON_1_PIN)
+button1.direction = dio.Direction.INPUT
+button1.pull = dio.Pull.DOWN
 
-trackball = TrackBall(interrupt_pin=board.D3)
+# Button 2 setup
+BUTTON_2_PIN = board.D0
+button2 = dio.DigitalInOut(BUTTON_2_PIN)
+button2.direction = dio.Direction.INPUT
+button2.pull = dio.Pull.DOWN
 
-def clear_trackball():
-    trackball.set_rgbw(0, 0, 0, 0)
-    
-x = 0
-y = 50.0
+# Switch setup
 
-toggled = False
 
-def hsv_to_rgb(h, s, v):
-    """Convert HSV to RGB.
-    
-    Args:
-        h (float): Hue, between 0.0 and 1.0
-        s (float): Saturation, between 0.0 and 1.0
-        v (float): Value (brightness), between 0.0 and 1.0
-    
-    Returns:
-        tuple: (r, g, b) values as integers between 0 and 255
-    """
-    i = int(h * 6)  # Determine which segment of the color wheel
-    f = (h * 6) - i  # Fractional part for blending
-    p = int(255 * v * (1 - s))
-    q = int(255 * v * (1 - f * s))
-    t = int(255 * v * (1 - (1 - f) * s))
-    v = int(255 * v)
+# Trackball setup
+INTERRUPT_PIN = board.D3
+trackball = TrackBall(interrupt_pin=INTERRUPT_PIN)
 
-    i = i % 6
-    if i == 0:
-        return v, t, p
-    elif i == 1:
-        return q, v, p
-    elif i == 2:
-        return p, v, t
-    elif i == 3:
-        return p, q, v
-    elif i == 4:
-        return t, p, v
-    elif i == 5:
-        return v, p, q
+# Bluetooth setup
+ble = BLERadio()
+hid = HIDService()
+ble.name = "TrackballMouse"
+advertisement = ProvideServicesAdvertisement(hid)
+mouse = Mouse(hid.devices)
+ble.start_advertising(advertisement) # Start advertising
+
+connected = False
+
+sensitivity = 50
+
+#def clear_trackball():
+#    trackball.set_rgbw(0, 0, 0, 0)
 
 while True:
-    up, down, left, right, switch, state = trackball.read()
     
-    # Update x and y values based on movement
-    y += up
-    y -+ down
-    x += right / 10.0
-    x-= left / 10.0
-    
-    # Clamp to min of 0 and max of 100
-    x %= 100
-    y = max(0, min(y,100))
-    
-    # Calculate hue and brightness
-    h = x / 100.0
-    v = y / 100.0
-    
-    # Prevents button from retriggering
-    debounce = 0.5
-    
-    # Change toggled state if switch is pressed
-    if state and not toggled:
-        toggled = True
-        time.sleep(debounce)
-    elif state and toggled:
-        toggled = False
-        time.sleep(debounce)
+    # If bluetooth is connected
+    while ble.connected:
         
-    # Set brightness to zero if switch toggled
-    if toggled:
-        v = 0
+        # Print bluetooth connected message
+        if not connected:
+            connected = True
+            print("Bluetooth connected!")
+            
+        # Read in trackball inputs
+        up, down, left, right, switch, state = trackball.read()
         
-    # Calculate RGB value
-    w = 0
-    r, g, b = hsv_to_rgb(h, 1.0, v)
-    
-    # Set LEDs
-    trackball.set_rgbw(r, g, b, w)
-    
-    time.sleep(0.01)
+        # Translate trackball movements into mouse movements
+        if up:
+            mouse.move(y=-sensitivity)
+        if down:
+            mouse.move(y=sensitivity)
+        if left:
+            mouse.move(x=-sensitivity)
+        if right:
+            mouse.move(x=sensitivity)
+            
+        # Translate trackball click to LMB click
+        if state: # Trackball button pressed
+            mouse.press(Mouse.LEFT_BUTTON)
+        else: # Trackball button released
+            mouse.release_all()
+        
+        # Detect button presses (pin goes HIGH)
+        if button1.value: # True if button is pressed
+            print("Button #1 Pressed!")
+            trackball.set_rgbw(0, 255, 0, 0)
+            time.sleep(0.2) # Debounce delay to avoid repeated detections
+        
+        elif button2.value:
+            print("Button #2 Pressed!")
+            trackball.set_rgbw(0, 0, 255, 0)
+            time.sleep(0.2)
+            
+        else:
+            trackball.set_rgbw(255, 0, 0, 0)
+            
+        time.sleep(0.01) # For smoother movement
+            
+    # If bluetooth is not connected
+    while not ble.connected:
+        
+        connected = False
+        print("Waiting for Bluetooth connection...")
+        time.sleep(5)
+        
+        
